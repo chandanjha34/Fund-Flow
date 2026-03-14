@@ -4,7 +4,7 @@
   "private": true,
   "description": "Group fundraising, predictions, and DeFi on Starknet with gasless StarkZap flows",
   "scripts": {
-    "build": "next build",
+    "build": "next build --webpack",
     "dev": "next dev --hostname 127.0.0.1",
     "lint": "eslint .",
     "start": "next start"
@@ -57,7 +57,7 @@
     "input-otp": "1.4.1",
     "kalshi-typescript": "^2.1.3",
     "lucide-react": "^0.454.0",
-    "next": "15.5.4",
+    "next": "^16.1.6",
     "next-themes": "^0.4.6",
     "permissionless": "latest",
     "qrcode": "latest",
@@ -81,6 +81,7 @@
     "@types/qrcode": "^1.5.5",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "playwright": "^1.58.2",
     "postcss": "^8.5",
     "tailwindcss": "^4.1.9",
     "tw-animate-css": "1.3.3",
