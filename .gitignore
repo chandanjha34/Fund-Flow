@@ -158,3 +158,5 @@ temp/
 # Claude AI generated files
 *CLAUDE*.md
 *claude*.md
+.vercel
+.env*.local

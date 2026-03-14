@@ -2,12 +2,45 @@ import type { GroupData } from "./group-data"
 
 const STORAGE_KEY = "fundflow_groups"
 
+function toNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function toBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase()
+    return normalized === "true" || normalized === "1"
+  }
+  if (typeof value === "number") return value === 1
+  return false
+}
+
+function normalizeGroup(raw: GroupData): GroupData {
+  return {
+    ...raw,
+    amountPerRecurrence: toNumber(raw.amountPerRecurrence, 0),
+    fundingGoal: toNumber(raw.fundingGoal, 0),
+    totalCollected: toNumber(raw.totalCollected, 0),
+    members: Array.isArray(raw.members) ? raw.members : [],
+    isPublic: toBoolean(raw.isPublic),
+    createdAt: raw.createdAt || new Date().toISOString(),
+  }
+}
+
 export function getAllGroups(): Record<string, GroupData> {
   if (typeof window === "undefined") return {}
 
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? JSON.parse(stored) : {}
+    const parsed = stored ? (JSON.parse(stored) as Record<string, GroupData>) : {}
+    const normalized: Record<string, GroupData> = {}
+    for (const [groupId, group] of Object.entries(parsed)) {
+      if (!group || typeof group !== "object") continue
+      normalized[groupId] = normalizeGroup(group)
+    }
+    return normalized
   } catch (error) {
     console.error("[FundFlow] Error reading groups from storage:", error)
     return {}
@@ -19,7 +52,7 @@ export function getPublicGroups(): GroupData[] {
 
   try {
     const groups = getAllGroups()
-    return Object.values(groups).filter((group) => group.isPublic)
+    return Object.values(groups).filter((group) => toBoolean(group.isPublic))
   } catch (error) {
     console.error("[FundFlow] Error getting public groups:", error)
     return []

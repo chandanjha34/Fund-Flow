@@ -30,6 +30,7 @@ export function CreateProposalModal({ isOpen, onClose, circleId }: CreateProposa
   const [kalshiMarkets, setKalshiMarkets] = useState<KalshiMarket[]>([])
   const [selectedMarket, setSelectedMarket] = useState<KalshiMarket | null>(null)
   const [showConfirmation, setShowConfirmation] = useState(false) // New state for confirmation step
+  const [manualMode, setManualMode] = useState(false)
   
   // Proposal fields (populated from selected market)
   const [title, setTitle] = useState("")
@@ -134,6 +135,7 @@ export function CreateProposalModal({ isOpen, onClose, circleId }: CreateProposa
     setKalshiMarkets([])
     setSelectedMarket(null)
     setShowConfirmation(false)
+    setManualMode(false)
     setTitle("")
     setDescription("")
     setDuration("24")
@@ -184,7 +186,103 @@ export function CreateProposalModal({ isOpen, onClose, circleId }: CreateProposa
                 <p className="text-xs text-muted-foreground">
                   Search active Kalshi markets to prefill your question and outcomes.
                 </p>
+                <div className="pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="px-0 text-accent hover:text-accent/90"
+                    onClick={() => {
+                      setManualMode(true)
+                      setShowConfirmation(false)
+                      setSelectedMarket(null)
+                    }}
+                  >
+                    Create custom market instead
+                  </Button>
+                </div>
               </div>
+            )}
+
+            {manualMode && !showConfirmation && !selectedMarket && (
+              <Card className="p-6 space-y-4 border-accent/30">
+                <div className="space-y-1">
+                  <h3 className="text-lg font-semibold">Custom Prediction</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Create a circle-only market without linking to Kalshi.
+                  </p>
+                </div>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="custom-title">Question</Label>
+                    <Input
+                      id="custom-title"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="Will BTC close above $100k this week?"
+                      disabled={isSubmitting}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="custom-description">Description</Label>
+                    <Input
+                      id="custom-description"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="Circle members bet on the outcome with STRK."
+                      disabled={isSubmitting}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="duration-manual">Betting Duration</Label>
+                    <Select value={duration} onValueChange={setDuration} disabled={isSubmitting}>
+                      <SelectTrigger id="duration-manual">
+                        <SelectValue placeholder="Select duration" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="6">6 hours</SelectItem>
+                        <SelectItem value="12">12 hours</SelectItem>
+                        <SelectItem value="24">24 hours</SelectItem>
+                        <SelectItem value="48">2 days</SelectItem>
+                        <SelectItem value="72">3 days</SelectItem>
+                        <SelectItem value="168">1 week</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="rounded-lg border border-border/60 p-3 text-sm text-muted-foreground">
+                    Default outcomes: Yes / No
+                  </div>
+
+                  <div className="flex gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setManualMode(false)}
+                      disabled={isSubmitting}
+                      className="flex-1"
+                    >
+                      Back
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={isSubmitting || !connected || !title.trim() || !description.trim()}
+                      className="flex-1 bg-[#00ab79] hover:bg-[#009368] text-white"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        "Create Custom Proposal"
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              </Card>
             )}
 
             {/* Search Results */}
@@ -334,6 +432,14 @@ export function CreateProposalModal({ isOpen, onClose, circleId }: CreateProposa
               <div className="text-center py-8 text-muted-foreground">
                 <p className="mb-2">No markets found for "{searchQuery}"</p>
                 <p className="text-sm">Try different keywords</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-4"
+                  onClick={() => setManualMode(true)}
+                >
+                  Create Custom Market
+                </Button>
               </div>
             )}
           </div>

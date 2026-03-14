@@ -12,6 +12,21 @@ import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { GroupAvatar } from "@/components/avatar"
 
+function toNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function normalizeGroup(group: GroupData): GroupData {
+  return {
+    ...group,
+    fundingGoal: toNumber(group.fundingGoal, 0),
+    totalCollected: toNumber(group.totalCollected, 0),
+    members: Array.isArray(group.members) ? group.members : [],
+    createdAt: group.createdAt || new Date().toISOString(),
+  }
+}
+
 export default function CirclesPage() {
   const [groups, setGroups] = useState<GroupData[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -27,20 +42,21 @@ export default function CirclesPage() {
                 const mergedById = new Map<string, GroupData>()
                 for (const g of firebaseGroups) mergedById.set(g.id, g)
                 for (const g of localGroups) {
-                  if (!mergedById.has(g.id)) {
-                    mergedById.set(g.id, g)
-                  }
+                  // Prefer local record for immediate consistency after create/join/contribute.
+                  mergedById.set(g.id, g)
                 }
 
-                const mergedGroups = Array.from(mergedById.values()).sort(
+                const mergedGroups = Array.from(mergedById.values())
+                  .map(normalizeGroup)
+                  .sort(
                   (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-                )
+                  )
 
                 console.log("[FundFlow] Loaded public circles (merged):", mergedGroups.length)
                 setGroups(mergedGroups)
               } catch (error) {
                 console.warn("[FundFlow] Firebase Realtime Database failed, using localStorage:", error)
-                const publicGroups = getPublicGroups()
+                const publicGroups = getPublicGroups().map(normalizeGroup)
                 setGroups(publicGroups)
               }
               setIsLoading(false)
@@ -108,7 +124,9 @@ export default function CirclesPage() {
             ) : (
               <div className="grid gap-6">
                 {groups.map((group) => {
-                  const progress = (group.totalCollected / group.fundingGoal) * 100
+                  const goal = toNumber(group.fundingGoal, 0)
+                  const collected = toNumber(group.totalCollected, 0)
+                  const progress = goal > 0 ? (collected / goal) * 100 : 0
 
                   return (
                     <Card
@@ -132,11 +150,11 @@ export default function CirclesPage() {
                             <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                               <div className="flex items-center gap-1.5">
                                 <Users className="h-4 w-4" />
-                                <span>{group.members.length} members</span>
+                                <span>{Array.isArray(group.members) ? group.members.length : 0} members</span>
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <DollarSign className="h-4 w-4" />
-                                <span>{group.fundingGoal.toLocaleString()} STRK goal</span>
+                                <span>{goal.toLocaleString()} STRK goal</span>
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <TrendingUp className={`h-4 w-4 ${getRiskColor(group.riskLevel)}`} />
@@ -150,7 +168,7 @@ export default function CirclesPage() {
                               <span className="text-muted-foreground">Progress</span>
                               <span className="font-medium flex items-center gap-1">
                                 <DollarSign className="h-4 w-4" />
-                                {group.totalCollected.toFixed(2)} / {group.fundingGoal.toLocaleString()} STRK
+                                {collected.toFixed(2)} / {goal.toLocaleString()} STRK
                               </span>
                             </div>
                             <Progress value={progress} className="h-2" />

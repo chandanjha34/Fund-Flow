@@ -74,12 +74,17 @@ const CARTRIDGE_POLICIES = [
 // ── StorageKey for persisting wallet type ─────────────────────────────────────
 const WALLET_TYPE_KEY = "fundflow_starknet_wallet_type";
 const FALLBACK_PK_KEY = "fundflow_starknet_fallback_pk";
+const STARK_CURVE_MAX_PRIVATE_KEY = BigInt(
+  "3618502788666131213697322783095070105526743751716087489154079457884512865583",
+);
 
 function createFallbackPrivateKey(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `0x${hex}`;
+  const randomValue = BigInt(`0x${hex}`);
+  const boundedValue = (randomValue % (STARK_CURVE_MAX_PRIVATE_KEY - 1n)) + 1n;
+  return `0x${boundedValue.toString(16)}`;
 }
 
 function createInjectedBraavosWallet(account: any) {
@@ -152,6 +157,27 @@ export function StarknetWalletProvider({ children }: { children: React.ReactNode
   const [walletType, setWalletType] = useState<"braavos" | "cartridge" | "demo" | null>(null);
   const [wallet, setWallet] = useState<any | null>(null);
 
+  const connectFallbackWallet = useCallback(async () => {
+    const { StarkSigner } = await import("starkzap");
+    const sdk = getSDK();
+    const persistedPk = localStorage.getItem(FALLBACK_PK_KEY);
+    const privateKey = persistedPk || createFallbackPrivateKey();
+    const signer = new StarkSigner(privateKey);
+    const fallbackWallet = await sdk.connectWallet({ account: { signer } });
+
+    if (!persistedPk) {
+      localStorage.setItem(FALLBACK_PK_KEY, privateKey);
+    }
+
+    setWallet(fallbackWallet as any);
+    setAddress(fallbackWallet.address as string);
+    setConnected(true);
+    setWalletType("demo");
+    localStorage.setItem(WALLET_TYPE_KEY, "demo");
+
+    return fallbackWallet;
+  }, []);
+
   // ── balance helper ────────────────────────────────────────────────────────────
   const refreshBalance = useCallback(async () => {
     if (!wallet) return;
@@ -209,6 +235,12 @@ export function StarknetWalletProvider({ children }: { children: React.ReactNode
         }
       } else if (mode === "braavos") {
         throw new Error("Braavos wallet extension not detected in browser");
+      }
+
+      if (canTryDemoFallback && typeof navigator !== "undefined" && navigator.webdriver) {
+        const fallbackWallet = await connectFallbackWallet();
+        console.warn("[StarkNet] Webdriver detected, connected fallback wallet:", fallbackWallet.address);
+        return;
       }
 
       if (!canTryCartridge) {
@@ -269,21 +301,7 @@ export function StarknetWalletProvider({ children }: { children: React.ReactNode
 
         console.warn("[StarkNet] Falling back to local signer wallet after Cartridge init failures.");
 
-        const { StarkSigner } = await import("starkzap");
-        const persistedPk = localStorage.getItem(FALLBACK_PK_KEY);
-        const privateKey = persistedPk || createFallbackPrivateKey();
-        const signer = new StarkSigner(privateKey);
-        const fallbackWallet = await sdk.connectWallet({ account: { signer } });
-
-        if (!persistedPk) {
-          localStorage.setItem(FALLBACK_PK_KEY, privateKey);
-        }
-
-        setWallet(fallbackWallet as any);
-        setAddress(fallbackWallet.address as string);
-        setConnected(true);
-        setWalletType("demo");
-        localStorage.setItem(WALLET_TYPE_KEY, "demo");
+        const fallbackWallet = await connectFallbackWallet();
 
         console.warn("[StarkNet] Cartridge unavailable, connected fallback wallet:", fallbackWallet.address);
         console.warn("[StarkNet] Cartridge failure details:", failures.join(" | "));
@@ -302,7 +320,7 @@ export function StarknetWalletProvider({ children }: { children: React.ReactNode
     } finally {
       setConnecting(false);
     }
-  }, [connecting, connected]);
+  }, [connecting, connected, connectFallbackWallet]);
 
   // ── Demo connect (dev only, never expose key in prod) ────────────────────────
   const connectDemo = useCallback(async (privateKey: string) => {

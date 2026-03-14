@@ -3,6 +3,9 @@ import { ref, push, set, get, update, onValue } from 'firebase/database'
 import { syncWithKalshi, isKalshiAvailable, placeKalshiBet } from './kalshi-integration'
 import { Amount, CIRCLE_TOKEN } from '@/lib/starkzap'
 
+const LOCAL_PREDICTIONS_KEY = 'fundflow_predictions'
+const LOCAL_VOTES_KEY = 'fundflow_prediction_votes'
+
 export interface PredictionProposal {
   id: string
   circleId: string
@@ -51,6 +54,81 @@ export interface Vote {
   timestamp: number
 }
 
+function canUseLocalStorage(): boolean {
+  return typeof window !== 'undefined'
+}
+
+function getLocalPredictionsStore(): Record<string, Record<string, PredictionProposal>> {
+  if (!canUseLocalStorage()) return {}
+
+  try {
+    const raw = window.localStorage.getItem(LOCAL_PREDICTIONS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveLocalPredictionsStore(store: Record<string, Record<string, PredictionProposal>>): void {
+  if (!canUseLocalStorage()) return
+  window.localStorage.setItem(LOCAL_PREDICTIONS_KEY, JSON.stringify(store))
+}
+
+function getLocalVotesStore(): Record<string, Record<string, Vote>> {
+  if (!canUseLocalStorage()) return {}
+
+  try {
+    const raw = window.localStorage.getItem(LOCAL_VOTES_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveLocalVotesStore(store: Record<string, Record<string, Vote>>): void {
+  if (!canUseLocalStorage()) return
+  window.localStorage.setItem(LOCAL_VOTES_KEY, JSON.stringify(store))
+}
+
+function saveLocalProposal(circleId: string, proposal: PredictionProposal): void {
+  const store = getLocalPredictionsStore()
+  store[circleId] = store[circleId] || {}
+  store[circleId][proposal.id] = proposal
+  saveLocalPredictionsStore(store)
+}
+
+function updateLocalProposal(circleId: string, proposalId: string, updates: Partial<PredictionProposal>): PredictionProposal | null {
+  const store = getLocalPredictionsStore()
+  const existing = store[circleId]?.[proposalId]
+  if (!existing) return null
+
+  const next = normalizeProposal({ ...existing, ...updates })
+  store[circleId][proposalId] = next
+  saveLocalPredictionsStore(store)
+  return next
+}
+
+function getLocalCircleProposals(circleId: string): PredictionProposal[] {
+  const proposals = Object.values(getLocalPredictionsStore()[circleId] || {})
+  return proposals.map(normalizeProposal).sort((a, b) => b.createdAt - a.createdAt)
+}
+
+function getLocalProposal(circleId: string, proposalId: string): PredictionProposal | null {
+  const proposal = getLocalPredictionsStore()[circleId]?.[proposalId]
+  return proposal ? normalizeProposal(proposal) : null
+}
+
+function saveLocalVote(vote: Vote): void {
+  const store = getLocalVotesStore()
+  store[vote.proposalId] = store[vote.proposalId] || {}
+  store[vote.proposalId][vote.voter] = vote
+  saveLocalVotesStore(store)
+}
+
+function getLocalProposalVotes(proposalId: string): Record<string, Vote> {
+  return getLocalVotesStore()[proposalId] || {}
+}
+
 function normalizeProposal(proposal: any): PredictionProposal {
   const normalized: PredictionProposal = {
     ...proposal,
@@ -78,6 +156,11 @@ function normalizeProposal(proposal: any): PredictionProposal {
 }
 
 async function getProposal(circleId: string, proposalId: string): Promise<PredictionProposal> {
+  const localProposal = getLocalProposal(circleId, proposalId)
+  if (localProposal) {
+    return localProposal
+  }
+
   const proposalRef = ref(db, `predictions/${circleId}/${proposalId}`)
   const snapshot = await get(proposalRef)
   if (!snapshot.exists()) {
@@ -92,6 +175,11 @@ async function getProposal(circleId: string, proposalId: string): Promise<Predic
 }
 
 async function getProposalVotes(proposalId: string): Promise<Record<string, Vote>> {
+  const localVotes = getLocalProposalVotes(proposalId)
+  if (Object.keys(localVotes).length > 0) {
+    return localVotes
+  }
+
   const voteRef = ref(db, `votes/${proposalId}`)
   const snapshot = await get(voteRef)
   if (!snapshot.exists()) return {}
@@ -148,16 +236,28 @@ export async function createProposal(
       treasuryAddress: config?.treasuryAddress,
     }
 
-    await set(newProposalRef, proposal)
+    saveLocalProposal(circleId, proposal)
+
+    try {
+      await set(newProposalRef, proposal)
+    } catch (error) {
+      console.warn('[PredictionMarket] Firebase create failed, keeping local proposal:', error)
+    }
     
     // If Kalshi ticker provided directly, use it
     if (kalshiTicker) {
       console.log('[PredictionMarket] ✅ Linking to Kalshi market:', kalshiTicker)
-      await update(newProposalRef, {
+        const kalshiUpdates = {
         kalshiTicker: kalshiTicker,
         kalshiSynced: true,
         kalshiSyncMessage: `Linked to Kalshi market: ${kalshiTicker}`
-      })
+        }
+        updateLocalProposal(circleId, proposalId, kalshiUpdates)
+        try {
+          await update(newProposalRef, kalshiUpdates)
+        } catch (error) {
+          console.warn('[PredictionMarket] Firebase Kalshi link update failed:', error)
+        }
     } else {
       // Otherwise, try to sync with Kalshi if available
       console.log('[PredictionMarket] Syncing with Kalshi...')
@@ -171,17 +271,29 @@ export async function createProposal(
       
       // Update proposal with Kalshi sync status
       if (kalshiSync.synced) {
-        await update(newProposalRef, {
+        const kalshiUpdates = {
           kalshiTicker: kalshiSync.kalshiTicker,
           kalshiSynced: true,
           kalshiSyncMessage: kalshiSync.message
-        })
+        }
+        updateLocalProposal(circleId, proposalId, kalshiUpdates)
+        try {
+          await update(newProposalRef, kalshiUpdates)
+        } catch (error) {
+          console.warn('[PredictionMarket] Firebase Kalshi sync update failed:', error)
+        }
         console.log('[PredictionMarket] ✅ Synced with Kalshi:', kalshiSync.kalshiTicker)
       } else {
-        await update(newProposalRef, {
+        const localOnlyUpdates = {
           kalshiSynced: false,
           kalshiSyncMessage: kalshiSync.message
-        })
+        }
+        updateLocalProposal(circleId, proposalId, localOnlyUpdates)
+        try {
+          await update(newProposalRef, localOnlyUpdates)
+        } catch (error) {
+          console.warn('[PredictionMarket] Firebase local-mode update failed:', error)
+        }
         console.log('[PredictionMarket] ℹ️ Running in local mode:', kalshiSync.message)
       }
     }
@@ -198,11 +310,12 @@ export async function createProposal(
  */
 export async function getCircleProposals(circleId: string): Promise<PredictionProposal[]> {
   try {
+    const localProposals = getLocalCircleProposals(circleId)
     const proposalsRef = ref(db, `predictions/${circleId}`)
     const snapshot = await get(proposalsRef)
     
     if (!snapshot.exists()) {
-      return []
+      return localProposals
     }
 
     const proposals: PredictionProposal[] = []
@@ -211,10 +324,14 @@ export async function getCircleProposals(circleId: string): Promise<PredictionPr
       proposals.push(proposal)
     })
 
-    return proposals.sort((a, b) => b.createdAt - a.createdAt)
+    const mergedById = new Map<string, PredictionProposal>()
+    for (const proposal of proposals) mergedById.set(proposal.id, proposal)
+    for (const proposal of localProposals) mergedById.set(proposal.id, proposal)
+
+    return Array.from(mergedById.values()).sort((a, b) => b.createdAt - a.createdAt)
   } catch (error) {
     console.error('Error fetching proposals:', error)
-    return []
+    return getLocalCircleProposals(circleId)
   }
 }
 
@@ -284,10 +401,19 @@ export async function placeBet(
     proposal.options[optionIndex].voters.push(voter)
     proposal.totalStake = (proposal.totalStake || 0) + amount
 
-    await update(proposalRef, {
+    updateLocalProposal(circleId, proposalId, {
       options: proposal.options,
-      totalStake: proposal.totalStake
+      totalStake: proposal.totalStake,
     })
+
+    try {
+      await update(proposalRef, {
+        options: proposal.options,
+        totalStake: proposal.totalStake
+      })
+    } catch (error) {
+      console.warn('[PredictionMarket] Firebase bet update failed, keeping local state:', error)
+    }
 
     // Record the vote
     const voteRef = ref(db, `votes/${proposalId}/${voter}`)
@@ -298,7 +424,12 @@ export async function placeBet(
       amount,
       timestamp: Date.now()
     }
-    await set(voteRef, vote)
+    saveLocalVote(vote)
+    try {
+      await set(voteRef, vote)
+    } catch (error) {
+      console.warn('[PredictionMarket] Firebase vote write failed, keeping local vote:', error)
+    }
     
     // Sync bet with Kalshi if market is linked
     if (proposal.kalshiTicker && isKalshiAvailable()) {
@@ -329,11 +460,13 @@ export function subscribeToProposals(
   circleId: string,
   callback: (proposals: PredictionProposal[]) => void
 ): () => void {
+  callback(getLocalCircleProposals(circleId))
+
   const proposalsRef = ref(db, `predictions/${circleId}`)
   
   const unsubscribe = onValue(proposalsRef, (snapshot) => {
     if (!snapshot.exists()) {
-      callback([])
+      callback(getLocalCircleProposals(circleId))
       return
     }
 
@@ -343,7 +476,12 @@ export function subscribeToProposals(
       proposals.push(proposal)
     })
 
-    callback(proposals.sort((a, b) => b.createdAt - a.createdAt))
+    const localProposals = getLocalCircleProposals(circleId)
+    const mergedById = new Map<string, PredictionProposal>()
+    for (const proposal of proposals) mergedById.set(proposal.id, proposal)
+    for (const proposal of localProposals) mergedById.set(proposal.id, proposal)
+
+    callback(Array.from(mergedById.values()).sort((a, b) => b.createdAt - a.createdAt))
   })
 
   return unsubscribe
@@ -359,11 +497,19 @@ export async function resolveProposal(
 ): Promise<void> {
   try {
     const proposalRef = ref(db, `predictions/${circleId}/${proposalId}`)
-    
-    await update(proposalRef, {
+    updateLocalProposal(circleId, proposalId, {
       status: 'resolved',
-      winningOption: winningOptionId
+      winningOption: winningOptionId,
     })
+    
+    try {
+      await update(proposalRef, {
+        status: 'resolved',
+        winningOption: winningOptionId
+      })
+    } catch (error) {
+      console.warn('[PredictionMarket] Firebase resolve failed, keeping local state:', error)
+    }
   } catch (error) {
     console.error('Error resolving proposal:', error)
     throw error
@@ -391,7 +537,7 @@ export async function submitProposalResult(
   const now = Date.now()
   const payoutWindowHours = proposal.payoutWindowHours || 24
 
-  await update(proposalRef, {
+  const pendingResultUpdate = {
     status: 'pending_result',
     winningOption: winningOptionId,
     resultSubmittedBy: resolver,
@@ -401,7 +547,14 @@ export async function submitProposalResult(
       ...(proposal.resultInputs || {}),
       [resolver]: winningOptionId,
     },
-  })
+  }
+
+  updateLocalProposal(circleId, proposalId, pendingResultUpdate)
+  try {
+    await update(proposalRef, pendingResultUpdate)
+  } catch (error) {
+    console.warn('[PredictionMarket] Firebase pending-result update failed, keeping local state:', error)
+  }
 }
 
 export async function submitResultInput(
@@ -426,12 +579,19 @@ export async function submitResultInput(
     throw new Error('Invalid option')
   }
 
-  await update(proposalRef, {
+  const resultInputUpdate = {
     resultInputs: {
       ...(proposal.resultInputs || {}),
       [voter]: optionId,
     },
-  })
+  }
+
+  updateLocalProposal(circleId, proposalId, resultInputUpdate)
+  try {
+    await update(proposalRef, resultInputUpdate)
+  } catch (error) {
+    console.warn('[PredictionMarket] Firebase result-input update failed, keeping local state:', error)
+  }
 }
 
 export async function finalizeProposalAndPayout(
@@ -486,11 +646,17 @@ export async function finalizeProposalAndPayout(
   const totalPot = Number(proposal.totalStake || 0)
 
   if (totalPot <= 0) {
-    await update(proposalRef, {
+    const noPayoutUpdate = {
       status: 'resolved',
       winningOption: finalWinningOption,
       settledAt: Date.now(),
-    })
+    }
+    updateLocalProposal(circleId, proposalId, noPayoutUpdate)
+    try {
+      await update(proposalRef, noPayoutUpdate)
+    } catch (error) {
+      console.warn('[PredictionMarket] Firebase finalize update failed, keeping local state:', error)
+    }
     return
   }
 
@@ -529,12 +695,18 @@ export async function finalizeProposalAndPayout(
     }
   }
 
-  await update(proposalRef, {
+  const finalUpdate = {
     status: 'resolved',
     winningOption: finalWinningOption,
     settledAt: Date.now(),
     payoutTxHash,
-  })
+  }
+  updateLocalProposal(circleId, proposalId, finalUpdate)
+  try {
+    await update(proposalRef, finalUpdate)
+  } catch (error) {
+    console.warn('[PredictionMarket] Firebase payout finalize failed, keeping local state:', error)
+  }
 }
 
 /**

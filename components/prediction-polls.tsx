@@ -230,19 +230,28 @@ export function PredictionPolls({ circleId, circleCreator, onProposalsChange }: 
 
   if (proposals.length === 0) {
     return (
-      <div className="text-center py-12">
-        <button
-          type="button"
-          onClick={() => setIsCreateOpen(true)}
-          className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent text-accent-foreground hover:bg-accent/90 transition mb-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        >
-          <Plus className="h-8 w-8" />
-        </button>
-        <h3 className="text-lg font-semibold mb-2">No Active Prediction</h3>
-        <p className="text-muted-foreground max-w-md mx-auto">
-          Create a prediction market for your circle to start betting with friends!
-        </p>
-      </div>
+      <>
+        <div className="text-center py-12">
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            aria-label="Create Market"
+            className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent text-accent-foreground hover:bg-accent/90 transition mb-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <Plus className="h-8 w-8" />
+          </button>
+          <h3 className="text-lg font-semibold mb-2">No Active Prediction</h3>
+          <p className="text-muted-foreground max-w-md mx-auto">
+            Create a prediction market for your circle to start betting with friends!
+          </p>
+        </div>
+
+        <CreateProposalModal
+          isOpen={isCreateOpen}
+          onClose={() => setIsCreateOpen(false)}
+          circleId={circleId}
+        />
+      </>
     )
   }
 

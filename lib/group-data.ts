@@ -37,9 +37,23 @@ function normalizeGroupData(group: GroupData): GroupData {
   }
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return await Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs)
+    }),
+  ])
+}
+
 export async function fetchGroupData(groupId: string): Promise<GroupData | null> {
+  const localGroup = getGroup(groupId)
+  if (localGroup) {
+    return normalizeGroupData(localGroup)
+  }
+
   try {
-    const firebaseGroup = await getGroupFromFirebase(groupId)
+    const firebaseGroup = await withTimeout(getGroupFromFirebase(groupId), 4000)
     if (firebaseGroup) {
       return normalizeGroupData(firebaseGroup)
     }
@@ -47,6 +61,5 @@ export async function fetchGroupData(groupId: string): Promise<GroupData | null>
     console.warn("[FundFlow] Firebase lookup failed, falling back to local storage:", error)
   }
 
-  const localGroup = getGroup(groupId)
-  return localGroup ? normalizeGroupData(localGroup) : null
+  return null
 }

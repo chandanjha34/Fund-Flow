@@ -14,6 +14,53 @@ import type { GroupData } from './group-data'
 
 const GROUPS_PATH = 'groups'
 
+function toNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function toBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    return normalized === 'true' || normalized === '1'
+  }
+  if (typeof value === 'number') return value === 1
+  return false
+}
+
+function normalizeMembers(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((member): member is string => typeof member === 'string')
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).filter(
+      (member): member is string => typeof member === 'string',
+    )
+  }
+
+  return []
+}
+
+function normalizeFirebaseGroup(groupId: string, data: any): GroupData {
+  return {
+    id: groupId,
+    name: data?.name ?? '',
+    creator: data?.creator ?? '',
+    recurringPeriod: data?.recurringPeriod ?? 'monthly',
+    amountPerRecurrence: toNumber(data?.amountPerRecurrence, 0),
+    riskLevel: data?.riskLevel ?? 'low',
+    totalDuration: data?.totalDuration ?? '',
+    fundingGoal: toNumber(data?.fundingGoal, 0),
+    isPublic: toBoolean(data?.isPublic),
+    members: normalizeMembers(data?.members),
+    totalCollected: toNumber(data?.totalCollected, 0),
+    createdAt: data?.createdAt || new Date().toISOString(),
+    groupWalletAddress: data?.groupWalletAddress,
+  } as GroupData
+}
+
 export async function saveGroupToFirebase(group: GroupData): Promise<string> {
   try {
     console.log('[FundFlow] Saving group to Firebase Realtime Database:', group.id)
@@ -68,28 +115,8 @@ export async function getGroupFromFirebase(groupId: string): Promise<GroupData |
     if (snapshot.exists()) {
       const data = snapshot.val()
       console.log('[FundFlow] Group found in Firebase:', data)
-      
-      // Convert Firebase data back to GroupData format
-      return {
-        id: groupId,
-        name: data.name,
-        creator: data.creator,
-        recurringPeriod: data.recurringPeriod,
-        amountPerRecurrence: data.amountPerRecurrence,
-        riskLevel: data.riskLevel,
-        totalDuration: data.totalDuration,
-        fundingGoal: data.fundingGoal,
-        isPublic: data.isPublic,
-        members: data.members || [],
-        totalCollected: data.totalCollected || 0,
-        createdAt: data.createdAt || new Date().toISOString(),
-        // Phase 1: Simple wallet
-        groupWalletAddress: data.groupWalletAddress,
-        // Phase 2: Multisig (commented out for now)
-        // onChainAddress: data.onChainAddress,
-        // squadsVaultAddress: data.squadsVaultAddress,
-        // squadsMultisigAddress: data.squadsMultisigAddress,
-      } as GroupData
+
+      return normalizeFirebaseGroup(groupId, data)
     } else {
       console.log('[FundFlow] Group not found in Firebase')
       return null
@@ -113,26 +140,7 @@ export async function getAllGroupsFromFirebase(): Promise<GroupData[]> {
       const data = snapshot.val()
       Object.keys(data).forEach((groupId) => {
         const groupData = data[groupId]
-        groups.push({
-          id: groupId,
-          name: groupData.name,
-          creator: groupData.creator,
-          recurringPeriod: groupData.recurringPeriod,
-          amountPerRecurrence: groupData.amountPerRecurrence,
-          riskLevel: groupData.riskLevel,
-          totalDuration: groupData.totalDuration,
-          fundingGoal: groupData.fundingGoal,
-          isPublic: groupData.isPublic,
-          members: groupData.members || [],
-          totalCollected: groupData.totalCollected || 0,
-          createdAt: groupData.createdAt || new Date().toISOString(),
-          // Phase 1: Simple wallet
-          groupWalletAddress: groupData.groupWalletAddress,
-          // Phase 2: Multisig (commented out for now)
-          // onChainAddress: groupData.onChainAddress,
-          // squadsVaultAddress: groupData.squadsVaultAddress,
-          // squadsMultisigAddress: groupData.squadsMultisigAddress,
-        } as GroupData)
+        groups.push(normalizeFirebaseGroup(groupId, groupData))
       })
     }
     
@@ -157,27 +165,8 @@ export async function getPublicGroupsFromFirebase(): Promise<GroupData[]> {
       const data = snapshot.val()
       Object.keys(data).forEach((groupId) => {
         const groupData = data[groupId]
-        if (groupData.isPublic === true) {
-          groups.push({
-            id: groupId,
-            name: groupData.name,
-            creator: groupData.creator,
-            recurringPeriod: groupData.recurringPeriod,
-            amountPerRecurrence: groupData.amountPerRecurrence,
-            riskLevel: groupData.riskLevel,
-            totalDuration: groupData.totalDuration,
-            fundingGoal: groupData.fundingGoal,
-            isPublic: groupData.isPublic,
-            members: groupData.members || [],
-            totalCollected: groupData.totalCollected || 0,
-            createdAt: groupData.createdAt || new Date().toISOString(),
-            // Phase 1: Simple wallet
-            groupWalletAddress: groupData.groupWalletAddress,
-            // Phase 2: Multisig (commented out for now)
-            // onChainAddress: groupData.onChainAddress,
-            // squadsVaultAddress: groupData.squadsVaultAddress,
-            // squadsMultisigAddress: groupData.squadsMultisigAddress,
-          } as GroupData)
+        if (toBoolean(groupData?.isPublic)) {
+          groups.push(normalizeFirebaseGroup(groupId, groupData))
         }
       })
     }
